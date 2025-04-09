@@ -111,7 +111,8 @@ process dupCallerCall{
     cpus params.cpu
     maxForks 15
 
-    publishDir "${params.output_folder}/burden_by_duplex/", mode: 'copy', pattern: '{*[txt|png]}' 
+    publishDir "${params.output_folder}/burden_by_duplex/", mode: 'copy', pattern: '{*txt}'
+    publishDir "${params.output_folder}/burden_by_duplex/", mode: 'copy', pattern: '{*png}' 
 
     input:
         tuple val(sample), path(bamT), path(baiT), path(bamN), path(baiN)
@@ -148,7 +149,7 @@ process mergeResults{
     memory params.mem+'GB'
     cpus params.cpu
 
-    publishDir "${params.output_folder}/", mode: 'copy', pattern: '{*vcf}' 
+    publishDir "${params.output_folder}/", mode: 'copy', pattern: '{*vcf.gz}' 
 
     input:
         tuple val(sample), path(snvs), path(indels)
@@ -171,7 +172,10 @@ process mergeResults{
         mv header.txt ${sample}_calls.vcf
 
         # add GT tag for annovar
-        ${projectDir}/bin/fixStrelkaOutput.sh *.vcf
+        ${projectDir}/bin/fixDupcallerOutput.sh *_calls.vcf
+	
+        # compress
+        bgzip ${sample}_calls.vcf
         """
 
     stub:
