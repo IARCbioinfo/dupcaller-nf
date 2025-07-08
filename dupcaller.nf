@@ -83,7 +83,7 @@ noise_mask = params.noise_mask ? (file(params.noise_mask)) : (file("NO_BED"))
 // Process to extract chromosome names from the reference index file (.fai)
 process get_chromosomes {
     input:
-    tuple path(fasta_ref), path(fasta_ref_fai), path(fasta_ref_gzi), path(fasta_ref_dict)
+    tuple path(fasta_ref), path(fasta_ref_fai), path(fasta_ref_hp_h5), path(fasta_ref_h5), path(fasta_tn_h5)
 
     output:
     //val(chroms), emit: chrom_list
@@ -100,8 +100,6 @@ process get_chromosomes {
     cut -f1 ${fasta_ref_fai} | sort | uniq | grep -v -P "alt|random|Un|chrEBV|HLA" > chrom_list.txt
     """
     
-    // Collect output as list
-    //chroms = file("${task.workDir}/chrom_list.txt").readLines()
 }
 
 //dupCallerCall
@@ -111,33 +109,34 @@ process dupCallerCall{
     cpus params.cpu
     maxForks 15
 
-    publishDir "${params.output_folder}/burden_by_duplex/", mode: 'copy', pattern: '{*txt}'
-    publishDir "${params.output_folder}/burden_by_duplex/", mode: 'copy', pattern: '{*png}' 
+    publishDir "${params.output_folder}/dupcaller/", mode: 'copy' 
 
     input:
         tuple val(sample), path(bamT), path(baiT), path(bamN), path(baiN)
-        tuple path(fasta_ref), path(fasta_ref_fai), path(fasta_ref_gzi), path(fasta_ref_dict)
+        tuple path(fasta_ref), path(fasta_ref_fai), path(fasta_ref_hp_h5), path(fasta_ref_h5), path(fasta_tn_h5)
         tuple path(vcf), path(vcf_tbi)
         path(bed)
         each chromosome
 
 
     output:
-        tuple val(sample), path("${sample}*snv.vcf"), path("${sample}*indel.vcf"), emit : vcfs
+        //tuple val(sample), path("${sample}*snv.vcf"), path("${sample}*indel.vcf"), emit : vcfs
+        tuple val(sample), path("${sample}*/${sample}*_snv.vcf"), path("${sample}*/${sample}*_indel.vcf"), emit : vcfs
+        path("${sample}*/*"), emit : report
 
     shell:
         germline = (vcf.baseName=="NO_VCF") ? "": "-g " + vcf.join(" -g ")
         noise_mask = (bed.baseName=="NO_BED") ? "" : "-m " + bed.join(" -m ")
         """
-        DupCallerCall.py -b $bamT -n $bamN  -f $fasta_ref -o ${sample}_${chromosome} -p $task.cpus -r $chromosome $germline $noise_mask 
+        DupCaller.py call -tt 30 -b $bamT -n $bamN  -f $fasta_ref -o ${sample}_${chromosome} -p $task.cpus -r $chromosome $germline $noise_mask 
         """
 
     stub:
         """
-        touch ${sample}_${chromosome}.snv.vcf
-        touch ${sample}_${chromosome}.indel.vcf
-        touch ${sample}_${chromosome}.txt
-        touch ${sample}_${chromosome}.png
+        touch ${sample}_${chromosome}/${sample}_${chromosome}.snv.vcf
+        touch ${sample}_${chromosome}/${sample}_${chromosome}.indel.vcf
+        touch ${sample}_${chromosome}/${sample}_${chromosome}.txt
+        touch ${sample}_${chromosome}/${sample}_${chromosome}.png
         """
 
 }
@@ -203,12 +202,25 @@ workflow {
             file(row.tumor), file("${row.tumor}.{bai,crai}")[0],
             file(row.normal), file("${row.normal}.{bai,crai}")[0]
         )}
-    
+
+
+    //required_extensions = ['0123', 'amb', 'ann', 'bwt.8bit.32', 'pac']
+    //index_files = required_extensions.collect { ext -> file("${ref_base}.fasta.${ext}")
+    //dup_idx_ch = Channel.of( index_files.collect { file(it) })
+
+    ref = tuple( file(params.ref), 
+                file("${params.ref}.fai"), 
+                    //file("${params.ref}".replaceAll(/\.fa(sta)?$/, '.dict')),
+                file("${params.ref}.hp.h5"),
+                file("${params.ref}.ref.h5"),
+                file("${params.ref}.tn.h5")
+    )
+
     chromosome = get_chromosomes(ref).splitText().collect{ it.trim() }.view()
 
     ///dupCallerCall(pairs,ref,params.region,known_snp,noise_mask)
-    vcfs = dupCallerCall(pairs, ref, known_snp, noise_mask, chromosome)
-    mergeResults( vcfs.groupTuple(by: 0) )
+    dupCallerCall(pairs, ref, known_snp, noise_mask, chromosome)
+    mergeResults( dupCallerCall.out.vcfs.groupTuple(by: 0) )
 
 
 }
